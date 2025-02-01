@@ -128,8 +128,137 @@ def train_step(optimizer, model, batch_image, batch_bbox, batch_labels):
     
     return total_loss, coord_loss, obejct_loss, noobject_loss, class_loss
 
-def save_validation_result():
-    pass
+def save_validation_result(model, ckpt, validation_summary_writer, num_visualize_image):
+    total_validation_total_loss = 0.0
+    total_validation_coord_loss = 0.0
+    total_validation_object_loss = 0.0
+    total_validation_noobject_loss = 0.0
+    total_validation_class_loss = 0.0
+    
+    for iter, features in enumerate(validation_data):
+        batch_validation_image = features['image']
+        batch_validation_bbox = features['objects']['bbox']
+        batch_validation_labels = features['objects']['label']
+        
+        batch_size_image = tf.squeeze(batch_validation_image, axis=1)
+        batch_size_bbox = tf.squeeze(batch_validation_bbox, axis=1)
+        batch_size_labels = tf.squeeze(batch_validation_labels, axis=1)
+        
+        validation_total_loss,validation_coord_loss, validation_object_loss, validation_noobject_loss, validation_class_loss\
+        = calculate_loss(model, batch_size_image, batch_validation_bbox, batch_validation_labels)
+        
+        total_validation_total_loss  = total_validation_total_loss + validation_total_loss
+        total_validation_coord_loss = total_validation_coord_loss + validation_coord_loss
+        total_validation_object_loss = total_validation_object_loss + validation_object_loss
+        total_validation_noobject_loss = total_validation_noobject_loss + validation_noobject_loss
+        total_validation_class_loss = total_validation_class_loss + validation_class_loss
+        
+        # save validation tensorboard log
+        with validation_summary_writer.as_default():
+            tf.summary.scalar('total_validation_total_loss', total_validation_total_loss, step=int(ckpt.step))
+            tf.summary.scalar('total_validation_coord_loss', total_validation_coord_loss, step=int(ckpt.step))
+            tf.summary.scalar('total_validation_object_loss', total_validation_object_loss, step=int(ckpt.step))
+            tf.summary.scalar('total_validation_noobject_loss', total_validation_noobject_loss, step=int(ckpt.step))
+            tf.summary.scalar('total_validation_class_loss', total_validation_class_loss, step=int(ckpt.step))
+            
+            
+        # save validation test image
+        for validation_image_index in range(num_visualize_image):
+            random_idx = random.randint(0, batch_validation_image.shape[0]-1)
+            image, labels, object_num = process_each_ground_truth(batch_validation_image[random_idx], batch_validation_bbox[random_idx]|
+                                                                  batch_validation_labels[random_idx], input_width, input_height)
+            
+            drawing_image = image
+            
+            image = tf.expand_dims(image, axis=0)
+            predict = model(image)
+            predict = reshape_yolo_preds(predict)
+            
+            # parse prediction
+            predict_boxes = predict[0, :, :, num_classes + boxes_per_cell]
+            predict_boxes = tf.reshape(predict_boxes, [cell_size, cell_size, boxes_per_cell, 4])
+
+            confidence_boxes = predict[0, :, :, num_classes:num_classes + boxes_per_cell]
+            confidence_boxes = tf.reshape(confidence_boxes, [cell_size, cell_size, boxes_per_cell, 1])
+            
+            class_prediction = predict[0, :, :, 0:num_classes]
+            class_prediction = tf.argmax(class_prediction, axis=2)
+            
+            # make prediction bounding box list
+            bounding_box_info_list = []
+            for i in range(cell_size):
+                for j in range(cell_size):
+                    for k in range(boxes_per_cell):
+                        pred_xcenter = predict_boxes[i][j][k][0]
+                        pred_ycenter = predict_boxes[i][j][k][1]
+                        pred_box_w = tf.minimum(input_width * 1.0, tf.maximum(0.0, predict_boxes[i],[j][k][2]))
+                        pred_box_h = tf.minimum(input_width * 1.0, tf.maximum(0.0, predict_boxes[i],[j][k][3]))
+                        
+                        pred_class_name = cat_label_dict[class_prediction[i][j].numpy()]
+                        pred_confidence = confidence_boxes[i][j][k].numpy()[0]
+                        
+                        # add bounding box dict list
+                        bounding_box_info_list.append(yolo_format_to_bounding_box_dict(pred_xcenter, pred_ycenter, pred_box_w, pred_box_h, pred_class_name, pred_confidence))
+                        
+            # make ground truth boudning box list
+            ground_truth_bounding_box_info_list = []
+            for each_object_num in range(object_num):
+                labels = np.array(labels)
+                label = labels[each_object_num, :]
+                xcenter = label[0]
+                ycenter = label[1]
+                box_w = label[2]
+                box_h = label[3]
+                class_label = label[4]
+                
+                # label 7 : cat
+                # add ground-truth bounding box dict list
+                if class_label == 7:
+                    ground_truth_bounding_box_info_list.append(
+                        yolo_format_to_bounding_box_dict(xcenter, ycenter, box_w, box_h,'cat',1.0)
+                    )
+                    
+                ground_truth_drawing_image = drawing_image.copy()
+                # draw groung-truth image
+                for ground_truth_bounding_box_info in ground_truth_bounding_box_info_list:
+                    draw_bounding_box_and_label_info(
+                        ground_truth_drawing_image,
+                        ground_truth_bounding_box_info['left'],
+                        ground_truth_bounding_box_info['top'],
+                        ground_truth_bounding_box_info['right'],
+                        ground_truth_bounding_box_info['bottom'],
+                        ground_truth_bounding_box_info['class_name'],
+                        ground_truth_bounding_box_info['confidence'],
+                        color_list[cat_class_to_label_dict[ground_truth_bounding_box_info['class_name']]]
+                    )
+                    
+                # find one max confidence bounding box
+                max_confidence_bounding_box = find_max_confidence_bounding_box(bounding_box_info_list)
+                
+                # draw prediction
+                draw_bounding_box_and_label_info(
+                    drawing_image,
+                    max_confidence_bounding_box['left'],
+                    max_confidence_bounding_box['top'],
+                    max_confidence_bounding_box['right'],
+                    max_confidence_bounding_box['bottom'],
+                    max_confidence_bounding_box['class_name'],
+                    max_confidence_bounding_box['confidence'],
+                    color_list[cat_class_to_label_dict[max_confidence_bounding_box['class_name']]]
+                )
+                
+                # left : ground-truth, right : prediction
+                drawing_image = np.concatenate((ground_truth_drawing_image, drawing_image),axis=1)
+                drawing_image = drawing_image / 255
+                drawing_image = tf.expand_dims(drawing_image, axis=0)
+                
+                # save tensorboard log
+                with validation_summary_writer.as_default():
+                    tf.summary.image('validatino_image_'+str(validation_image_index), drawing_image, step=int(ckpt.step))
+                
+                
+            
+        
 
 def main(_):
     # set learning rate decay
