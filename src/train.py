@@ -84,8 +84,41 @@ def reshape_yolo_preds(preds):
     # flatten vector -> cell_size x cell_size x (num_classes + 5 * boxes_per_cell)
     return tf.reshape(preds, [tf.shape(preds)[0], cell_size,cell_size,num_classes + 5 * boxes_per_cell])
 
-def calculate_loss():
-    pass
+def calculate_loss(model, batch_image, batch_bbox, batch_labels):
+    total_loss = 0.0
+    coord_loss = 0.0
+    object_loss = 0.0
+    noobject_loss = 0.0
+    class_loss = 0.0
+    
+    for batch_index in range(batch_image.shape[0]):
+        image, labels, object_num = precess_each_ground_truth(batch_image[batch_index], batch_labels[batch_index],input_width, input_height)
+        image = tf.expand_dims(image, axis=0)
+        
+        predict = model(image)
+        predict = reshape_yolo_preds(predict)
+        
+        for object_num_index in range(object_num):
+            each_object_total_loss, each_object_coord_loss, each_object_object_loss, each_object_noobject_loss, each_object_class_loss = yolo_loss(predict[0],
+                                                                                                                        labels,
+                                                                                                                        object_num_index,
+                                                                                                                        num_classes,
+                                                                                                                        boxes_per_cell,
+                                                                                                                        cell_size,
+                                                                                                                        input_width,
+                                                                                                                        input_height,
+                                                                                                                        coord_scale,
+                                                                                                                        object_scale,
+                                                                                                                        noobject_scale,
+                                                                                                                        class_scale
+                                                                                                                        )
+            total_loss = total_loss + each_object_total_loss
+            coord_loss = coord_loss + each_object_coord_loss
+            object_loss = object_loss + each_object_object_loss
+            noobject_loss = noobject_loss + each_object_noobject_loss
+            class_loss - class_loss + each_object_class_loss
+            
+    return total_loss, coord_loss, object_loss, noobject_loss, class_loss
 
 def train_step():
     pass
