@@ -120,8 +120,13 @@ def calculate_loss(model, batch_image, batch_bbox, batch_labels):
             
     return total_loss, coord_loss, object_loss, noobject_loss, class_loss
 
-def train_step():
-    pass
+def train_step(optimizer, model, batch_image, batch_bbox, batch_labels):
+    with tf.GradientTape() as tape:
+        total_loss, coord_loss, obejct_loss, noobject_loss, class_loss = calculate_loss(model, batch_image, batch_bbox, batch_labels)
+    gradients = tape.gradient(total_loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variable))
+    
+    return total_loss, coord_loss, obejct_loss, noobject_loss, class_loss
 
 def save_validation_result():
     pass
