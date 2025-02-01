@@ -92,7 +92,7 @@ def calculate_loss(model, batch_image, batch_bbox, batch_labels):
     class_loss = 0.0
     
     for batch_index in range(batch_image.shape[0]):
-        image, labels, object_num = precess_each_ground_truth(batch_image[batch_index], batch_labels[batch_index],input_width, input_height)
+        image, labels, object_num = process_each_ground_truth(batch_image[batch_index], batch_labels[batch_index],input_width, input_height)
         image = tf.expand_dims(image, axis=0)
         
         predict = model(image)
